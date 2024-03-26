@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Garnet.common;
 using Tsavorite.core;
 
@@ -255,12 +256,31 @@ namespace Garnet.server
             if (NetworkSingleKeySlotVerify(keyPtr, ksize, false))
                 return true;
 
+
+            var temp = Marshal.AllocHGlobal(sizeof(int) + this.db_id.Length + 1 + ksize);
+
+            var newkeyptr = temp + sizeof(int);
+
+
+            Unsafe.CopyBlock((byte*)newkeyptr, (byte*)keyPtr, (uint)ksize);
+
+            this.AddKeyPrefix((byte*)newkeyptr, ksize, (p, s) =>
+            {
+                Unsafe.CopyBlock((byte*)newkeyptr, (byte*)p, (uint)s);
+
+                keyPtr = (byte*)newkeyptr;
+                ksize = s;
+            });
+
             keyPtr -= sizeof(int);
             valPtr -= sizeof(int);
             *(int*)keyPtr = ksize;
             *(int*)valPtr = vsize;
-
             var status = storageApi.SET(ref Unsafe.AsRef<SpanByte>(keyPtr), ref Unsafe.AsRef<SpanByte>(valPtr));
+
+            Marshal.FreeHGlobal(temp);
+
+
             while (!RespWriteUtils.WriteResponse(CmdStrings.RESP_OK, ref dcurr, dend))
                 SendAndReset();
 

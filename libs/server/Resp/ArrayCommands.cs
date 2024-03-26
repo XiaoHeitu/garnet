@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using Garnet.common;
 using Garnet.server.Custom;
@@ -21,6 +22,8 @@ namespace Garnet.server
     {
         int opsDone = 0;
         int keysDeleted = 0;
+
+        byte[] db_id = [(byte)'0'];
 
         /// <summary>
         /// MGET
@@ -649,8 +652,10 @@ namespace Garnet.server
 
             readHead = (int)(ptr - recvBufferPtr);
 
-            if (string.Equals(result, "0"))
+            if (!string.Equals(result, "16"))
             {
+                this.db_id = Encoding.UTF8.GetBytes(result);
+
                 while (!RespWriteUtils.WriteResponse(CmdStrings.RESP_OK, ref dcurr, dend))
                     SendAndReset();
             }
@@ -684,7 +689,21 @@ namespace Garnet.server
             if (!RespReadUtils.ReadPtrWithLengthHeader(ref pattern, ref psize, ref ptr, recvBufferPtr + bytesRead))
                 return false;
 
-            var patternAS = new ArgSlice(pattern, psize);
+            ArgSlice patternAS = default;
+
+            if (this.db_id.Length == 1 && this.db_id[0] == '0')
+            {
+                patternAS.ptr = (byte*)pattern;
+                patternAS.length = psize;
+            }
+            else
+            {
+                this.AddKeyPrefix(pattern, psize, (p, s) =>
+                {
+                    patternAS.ptr = (byte*)p;
+                    patternAS.length = s;
+                });
+            }
 
             var keys = storageApi.GetDbKeys(patternAS);
 
@@ -697,8 +716,16 @@ namespace Garnet.server
                 // Write the keys matching the pattern
                 foreach (var item in keys)
                 {
-                    while (!RespWriteUtils.WriteBulkString(item, ref dcurr, dend))
-                        SendAndReset();
+                    if (this.db_id.Length == 1 && this.db_id[0] == '0')
+                    {
+                        while (!RespWriteUtils.WriteBulkString(item, ref dcurr, dend))
+                            SendAndReset();
+                    }
+                    else
+                    {
+                        while (!RespWriteUtils.WriteBulkString(this.RemoveKeyPrefix(item), ref dcurr, dend))
+                            SendAndReset();
+                    }
                 }
             }
             else
@@ -881,5 +908,36 @@ namespace Garnet.server
                     SendAndReset();
             }
         }
+
+        private void AddKeyPrefix(byte* source, int sourceSize, Action<nint, int> action)
+        {
+            int newSize = sourceSize + db_id.Length + 1;
+            fixed (byte* newptr = new byte[newSize])
+            {
+
+                Marshal.Copy(db_id, 0, (nint)newptr, db_id.Length);
+                *(newptr + db_id.Length)  = (byte)':';
+
+                byte* sourceStart = newptr + db_id.Length + 1;
+
+                for (int i = 0; i < sourceSize; i++)
+                {
+                    *(sourceStart + i) = *(source + i);
+                }
+
+                action((nint)newptr, newSize);
+            }
+        }
+
+        private byte[] RemoveKeyPrefix(byte[] bytes)
+        {
+            byte[] result = new byte[bytes.Length - (db_id.Length + 1)];
+            Array.Copy(bytes, db_id.Length + 1, result, 0, result.Length);
+            return result;
+        }
+        //private void RemoveKeyPrefix(byte* ptr)
+        //{
+
+        //}
     }
 }
