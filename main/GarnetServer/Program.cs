@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 using System;
+using System.Runtime.Versioning;
 using System.Threading;
 using Garnet.server;
 
@@ -12,17 +13,22 @@ namespace Garnet
     /// </summary>
     class Program
     {
+        [RequiresPreviewFeatures]
         static void Main(string[] args)
         {
             try
             {
-                using var server = new GarnetServer(args);
+                using var tcpserver = new GarnetServer(args);
 
                 // Optional: register custom extensions
-                RegisterExtensions(server);
+                RegisterExtensions(tcpserver);
 
                 // Start the server
-                server.Start();
+                tcpserver.Start();
+
+
+                using var quicserver = new GarnetServer(args, null, new GarnetServerQuic("0.0.0.0", 3278, 4096));
+                quicserver.Start();
 
                 Thread.Sleep(Timeout.Infinite);
             }

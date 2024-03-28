@@ -69,8 +69,9 @@ namespace Garnet
         /// </summary>
         /// <param name="commandLineArgs">Command line arguments</param>
         /// <param name="loggerFactory">Logger factory</param>
-        public GarnetServer(string[] commandLineArgs, ILoggerFactory loggerFactory = null)
+        public GarnetServer(string[] commandLineArgs, ILoggerFactory loggerFactory = null, IGarnetServer server = null)
         {
+            this.server = server;
             Trace.Listeners.Add(new ConsoleTraceListener());
 
             // Set up an initial memory logger to log messages from configuration parser into memory.
@@ -118,6 +119,8 @@ namespace Garnet
 
             // Assign values to GarnetServerOptions
             this.opts = serverSettings.GetServerOptions(this.loggerFactory.CreateLogger("Options"));
+
+
             this.InitializeServer();
         }
 

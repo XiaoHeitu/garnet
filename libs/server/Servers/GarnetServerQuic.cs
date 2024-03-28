@@ -12,17 +12,23 @@ using Garnet.networking;
 using Garnet.server.TLS;
 using Microsoft.Extensions.Logging;
 using System.Net.Quic;
+using System.Runtime.Versioning;
+using System.Security.Cryptography.X509Certificates;
+using System.Threading.Tasks;
 
 
 namespace Garnet.server
 {
-    class GarnetServerQuic : GarnetServerBase, IServerHook
+    [RequiresPreviewFeatures]
+    public class GarnetServerQuic : GarnetServerBase, IServerHook
     {
         readonly SocketAsyncEventArgs acceptEventArg;
         readonly Socket servSocket;
         readonly IGarnetTlsOptions tlsOptions;
         readonly int networkSendThrottleMax;
         readonly LimitedFixedBufferPool networkPool;
+
+        private bool isRunning = false;
 
         /// <summary>
         /// Get active consumers
@@ -86,16 +92,20 @@ namespace Garnet.server
         /// <summary>
         /// Start listening to incoming requests
         /// </summary>
-        public override void Start()
+        public override async void Start()
         {
-            var ip = Address == null ? IPAddress.Any : IPAddress.Parse(Address);
-            var endPoint = new IPEndPoint(ip, Port);
-            servSocket.Bind(endPoint);
-            servSocket.Listen(512);
-            if (!servSocket.AcceptAsync(acceptEventArg))
-                AcceptEventArg_Completed(null, acceptEventArg);
+            //var ip = Address == null ? IPAddress.Any : IPAddress.Parse(Address);
+            //var endPoint = new IPEndPoint(ip, Port);
+            //servSocket.Bind(endPoint);
+            //servSocket.Listen(512);
+            //if (!servSocket.AcceptAsync(acceptEventArg))
+            //    AcceptEventArg_Completed(null, acceptEventArg);
 
+            await this.StartQuicServer();
+        }
 
+        private async Task StartQuicServer()
+        {
             // First, check if QUIC is supported.
 #if NET7_0_OR_GREATER
             if (!QuicListener.IsSupported)
@@ -107,26 +117,58 @@ namespace Garnet.server
                 return;
             }
 
-            //var serverConnectionOptions = new QuicServerConnectionOptions
-            //{
-            //    // Used to abort stream if it's not properly closed by the user.
-            //    // See https://www.rfc-editor.org/rfc/rfc9000#section-20.2
-            //    DefaultStreamErrorCode = 0x0A, // Protocol-dependent error code.
+#if NET7_0_OR_GREATER
+            var serverConnectionOptions = new QuicServerConnectionOptions
+            {
+                // Used to abort stream if it's not properly closed by the user.
+                // See https://www.rfc-editor.org/rfc/rfc9000#section-20.2
+                DefaultStreamErrorCode = 0x0A, // Protocol-dependent error code.
 
-            //    // Used to close the connection if it's not done by the user.
-            //    // See https://www.rfc-editor.org/rfc/rfc9000#section-20.2
-            //    DefaultCloseErrorCode = 0x0B, // Protocol-dependent error code.
+                // Used to close the connection if it's not done by the user.
+                // See https://www.rfc-editor.org/rfc/rfc9000#section-20.2
+                DefaultCloseErrorCode = 0x0B, // Protocol-dependent error code.
 
-            //    // Same options as for server side SslStream.
-            //    ServerAuthenticationOptions = new SslServerAuthenticationOptions
-            //    {
-            //        // List of supported application protocols, must be the same or subset of QuicListenerOptions.ApplicationProtocols.
-            //        //ApplicationProtocols = new List<SslApplicationProtocol>() { "protocol-name" },
-            //        // Server certificate, it can also be provided via ServerCertificateContext or ServerCertificateSelectionCallback.
-            //        //ServerCertificate = serverCertificate
-            //    }
-            //};
+                // Same options as for server side SslStream.
+                ServerAuthenticationOptions = new SslServerAuthenticationOptions
+                {
+                    // List of supported application protocols, must be the same or subset of QuicListenerOptions.ApplicationProtocols.
+                    ApplicationProtocols = new List<SslApplicationProtocol>() { SslApplicationProtocol.Http3 },
+                    // Server certificate, it can also be provided via ServerCertificateContext or ServerCertificateSelectionCallback.
+                    ServerCertificate = new X509Certificate()
+                }
+            };
 
+            var listener = await QuicListener.ListenAsync(new QuicListenerOptions
+            {
+                // Listening endpoint, port 0 means any port.
+                ListenEndPoint = new IPEndPoint(IPAddress.Any, 3278),
+                // List of all supported application protocols by this listener.
+                ApplicationProtocols = new List<SslApplicationProtocol>() { SslApplicationProtocol.Http3 },
+                // Callback to provide options for the incoming connections, it gets called once per each connection.
+                ConnectionOptionsCallback = (_, _, _) => ValueTask.FromResult(serverConnectionOptions)
+            });
+#else
+            var quicListenerOptions=new QuicListenerOptions {
+                ListenEndPoint=new IPEndPoint(IPAddress.Any,3278)
+            };
+            var listener=new QuicListener(quicListenerOptions);
+#endif
+
+            while (isRunning)
+            {
+                // Accept will propagate any exceptions that occurred during the connection establishment,
+                // including exceptions thrown from ConnectionOptionsCallback, caused by invalid QuicServerConnectionOptions or TLS handshake failures.
+                var connection = await listener.AcceptConnectionAsync();
+
+                // Process the connection...
+            }
+
+            // When finished, dispose the listener.
+#if NET7_0_OR_GREATER
+            await listener.DisposeAsync();
+#else
+            listener.Dispose();
+#endif
         }
 
         private void AcceptEventArg_Completed(object sender, SocketAsyncEventArgs e)
