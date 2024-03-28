@@ -4,12 +4,15 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Threading;
 using Garnet.common;
 using Garnet.networking;
 using Garnet.server.TLS;
 using Microsoft.Extensions.Logging;
+using System.Net.Quic;
+
 
 namespace Garnet.server
 {
@@ -91,6 +94,39 @@ namespace Garnet.server
             servSocket.Listen(512);
             if (!servSocket.AcceptAsync(acceptEventArg))
                 AcceptEventArg_Completed(null, acceptEventArg);
+
+
+            // First, check if QUIC is supported.
+#if NET7_0_OR_GREATER
+            if (!QuicListener.IsSupported)
+#else
+            if(!QuicImplementationProviders.MsQuic.IsSupported)
+#endif
+            {
+                Console.WriteLine("QUIC is not supported, check for presence of libmsquic and support of TLS 1.3.");
+                return;
+            }
+
+            //var serverConnectionOptions = new QuicServerConnectionOptions
+            //{
+            //    // Used to abort stream if it's not properly closed by the user.
+            //    // See https://www.rfc-editor.org/rfc/rfc9000#section-20.2
+            //    DefaultStreamErrorCode = 0x0A, // Protocol-dependent error code.
+
+            //    // Used to close the connection if it's not done by the user.
+            //    // See https://www.rfc-editor.org/rfc/rfc9000#section-20.2
+            //    DefaultCloseErrorCode = 0x0B, // Protocol-dependent error code.
+
+            //    // Same options as for server side SslStream.
+            //    ServerAuthenticationOptions = new SslServerAuthenticationOptions
+            //    {
+            //        // List of supported application protocols, must be the same or subset of QuicListenerOptions.ApplicationProtocols.
+            //        //ApplicationProtocols = new List<SslApplicationProtocol>() { "protocol-name" },
+            //        // Server certificate, it can also be provided via ServerCertificateContext or ServerCertificateSelectionCallback.
+            //        //ServerCertificate = serverCertificate
+            //    }
+            //};
+
         }
 
         private void AcceptEventArg_Completed(object sender, SocketAsyncEventArgs e)
